@@ -54,3 +54,8 @@ app(ApplicationInsights::class)->trackEvent('AV.HashCheck', [
 
 All automatic telemetry (HTTP / DB / jobs / mail / dependencies) is handled
 for you by the service provider.
+
+## About Stellar Security
+
+Stellar Security builds privacy-focused security products (Stellar Antivirus, StellarOS, VPN and more) with Swiss-grade security.
+

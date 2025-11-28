@@ -1,6 +1,7 @@
+
 # Stellar Security – Application Insights for Laravel
 
-Built by StellarSecurity.com
+Built by [StellarSecurity.com](https://stellarsecurity.com)
 
 Lightweight telemetry package for Laravel that sends structured events to your
 observability backend (e.g. Azure Application Insights).
@@ -28,34 +29,110 @@ Then publish the config:
 php artisan vendor:publish --tag=stellar-ai-config
 ```
 
-Set your connection string:
+Set your instrumentation key:
 
 ```env
-STELLAR_AI_CONNECTION_STRING="InstrumentationKey=...;IngestionEndpoint=https://..."
+STELLAR_AI_INSTRUMENTATION_KEY="446e6a5e-a5ca-4c50-b311-e82648d987ef"
+```
+
+If you use queues, enable queue mode:
+
+```env
 STELLAR_AI_USE_QUEUE=true
 ```
 
-If you use queues, run a worker:
+and run a worker:
 
 ```bash
 php artisan queue:work
 ```
 
-## Basic usage
+If you don’t use queues, the package will send telemetry synchronously.
+
+---
+
+## Enable automatic HTTP request tracking
+
+In **`bootstrap/app.php`** (Laravel 11/12 style), register the HTTP middleware:
+
+```php
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Foundation\Configuration\Exceptions;
+use StellarSecurity\ApplicationInsightsLaravel\Middleware\LogHttpRequests;
+
+return Application::configure(basePath: dirname(__DIR__))
+    ->withRouting(
+        web: __DIR__.'/../routes/web.php',
+        commands: __DIR__.'/../routes/console.php',
+        // ...
+    )
+    ->withMiddleware(function (Middleware $middleware) {
+        // Append Stellar HTTP logging to the global stack
+        $middleware->append(LogHttpRequests::class);
+    })
+    ->withExceptions(function (Exceptions $exceptions) {
+        // see "Enable automatic exception tracking" below
+    })
+    ->create();
+```
+
+After this, every incoming HTTP request will be sent to Application Insights as telemetry
+(method, URL, status code, duration, etc.).
+
+---
+
+## Enable automatic exception tracking
+
+Still in **`bootstrap/app.php`**, wire the exception hook inside `withExceptions`:
+
+```php
+use Throwable;
+use Illuminate\Foundation\Configuration\Exceptions;
+use StellarSecurity\ApplicationInsightsLaravel\ApplicationInsights;
+
+return Application::configure(basePath: dirname(__DIR__))
+    // ...
+    ->withExceptions(function (Exceptions $exceptions) {
+        $exceptions->report(function (Throwable $e) {
+            // Send exceptions to Application Insights
+            app(ApplicationInsights::class)->trackException($e);
+        });
+    })
+    ->create();
+```
+
+Now every reported exception will be pushed to Application Insights as a custom event / exception telemetry.
+
+---
+
+## Basic manual usage
+
+You can also send custom events from anywhere:
 
 ```php
 use StellarSecurity\ApplicationInsightsLaravel\ApplicationInsights;
 
 app(ApplicationInsights::class)->trackEvent('AV.HashCheck', [
-    'client' => 'Stellar Antivirus Desktop',
+    'client'  => 'Stellar Antivirus Desktop',
     'verdict' => 'malware',
 ]);
 ```
 
-All automatic telemetry (HTTP / DB / jobs / mail / dependencies) is handled
-for you by the service provider.
+---
+
+## What gets tracked automatically?
+
+Once installed and configured:
+
+- **HTTP requests** – via `LogHttpRequests` middleware
+- **Exceptions** – via the `withExceptions` hook
+- **(Optional) Queued jobs / DB / mail / dependencies** – depending on how you use the package in your app
+
+Telemetry is batched and sent to the official Azure ingestion endpoint.
+
+---
 
 ## About Stellar Security
 
 Stellar Security builds privacy-focused security products (Stellar Antivirus, StellarOS, VPN and more) with Swiss-grade security.
-

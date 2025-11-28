@@ -1,0 +1,22 @@
+{
+  "name": "stellarsecurity/application-insights-laravel",
+  "description": "Stellar Security - Application Insights style telemetry for Laravel (HTTP, DB, jobs, mail, dependencies).",
+  "type": "library",
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "StellarSecurity\\ApplicationInsightsLaravel\\": "src/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "StellarSecurity\\ApplicationInsightsLaravel\\StellarAiServiceProvider"
+      ]
+    }
+  },
+  "require": {
+    "php": ">=8.1",
+    "guzzlehttp/guzzle": "^7.0|^8.0"
+  }
+}

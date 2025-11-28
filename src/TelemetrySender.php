@@ -9,7 +9,7 @@ use StellarSecurity\ApplicationInsightsLaravel\Jobs\SendTelemetryJob;
 class TelemetrySender
 {
     protected array $buffer = [];
-    protected int $bufferLimit = 50;
+    protected int $bufferLimit = 1;
 
     public function __construct(
         protected ?QueueFactory $queue = null,
@@ -35,7 +35,6 @@ class TelemetrySender
         $this->buffer = [];
 
         $useQueue = (bool) config('stellar-ai.use_queue', true);
-
         if ($useQueue && $this->queue) {
             $this->queue->connection()->push(new SendTelemetryJob($batch));
             return;
@@ -59,14 +58,34 @@ class TelemetrySender
         $payload = [];
 
         foreach ($items as $item) {
+            // Hvis item ALLEREDE er et fuldt AI-envelope (fx RequestData / ExceptionData / etc),
+            // så sender vi det direkte og rører det ikke.
+            if (isset($item['data']['baseType'])) {
+                $envelope = $item;
+
+                // Sørg for iKey og time
+                if (empty($envelope['iKey']) && $ikey !== '') {
+                    $envelope['iKey'] = $ikey;
+                }
+
+                if (empty($envelope['time'])) {
+                    $envelope['time'] = gmdate('c');
+                }
+
+                $payload[] = $envelope;
+                continue;
+            }
+
+            // Ellers: wrap som custom EventData (fallback)
             $payload[] = [
                 'time' => $item['time'] ?? gmdate('c'),
-                'name' => 'Custom.' . ($item['type'] ?? 'event'),
+                'name' => $item['name'] ?? 'Custom.Event',
                 'iKey' => $ikey !== '' ? $ikey : null,
                 'data' => [
                     'baseType' => 'EventData',
                     'baseData' => [
-                        'name' => $item['name'] ?? ($item['type'] ?? 'event'),
+                        'ver'        => 2,
+                        'name'       => $item['name'] ?? ($item['type'] ?? 'event'),
                         'properties' => $item['properties'] ?? [],
                     ],
                 ],
@@ -78,11 +97,12 @@ class TelemetrySender
         ]);
 
         try {
-            $client->post($endpoint, [
+            $response = $client->post($endpoint, [
                 'json' => $payload,
             ]);
+
         } catch (\Throwable $e) {
-            // swallow – telemetry must never break app
+            // Telemetry må ALDRIG smadre appen – men vi kan godt logge lokalt
         }
     }
 }

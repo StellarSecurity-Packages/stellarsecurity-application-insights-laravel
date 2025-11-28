@@ -43,16 +43,41 @@ class ApplicationInsights
         float $durationMs,
         array $properties = []
     ): void {
-        $this->sender->enqueue([
-            'type' => 'request',
-            'time' => gmdate('c'),
-            'properties' => array_merge($properties, [
-                'request.method' => $method,
-                'request.url' => $url,
-                'request.status_code' => $statusCode,
-                'request.duration_ms' => $durationMs,
-            ]),
-        ]);
+
+        // AI timespan format: "HH:MM:SS.mmm"
+        $seconds = (int) floor($durationMs / 1000);
+        $millis  = (int) ($durationMs - ($seconds * 1000));
+        $duration = sprintf('00:00:%02d.%03d', $seconds, $millis);
+
+        $path = parse_url($url, PHP_URL_PATH) ?: '/';
+        $name = sprintf('%s %s', strtoupper($method), $path);
+
+        // 4xx/5xx = failed
+        $success = $statusCode < 400;
+
+        $item = [
+            'name' => 'Microsoft.ApplicationInsights.Request',
+            'data' => [
+                'baseType' => 'RequestData',
+                'baseData' => [
+                    'ver'          => 2,
+                    'id'           => bin2hex(random_bytes(8)),
+                    'name'         => $name,
+                    'duration'     => $duration,
+                    'responseCode' => (string) $statusCode,
+                    'success'      => $success,
+                    'url'          => $url,
+                    'properties'   => array_merge($properties, [
+                        'request.method'       => $method,
+                        'request.full_url'     => $url,
+                        'request.status_code'  => $statusCode,
+                        'request.duration_ms'  => $durationMs,
+                    ]),
+                ],
+            ],
+        ];
+
+        $this->sender->enqueue($item);
     }
 
     public function trackDependency(

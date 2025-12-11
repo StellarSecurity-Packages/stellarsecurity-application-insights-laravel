@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 use StellarSecurity\ApplicationInsightsLaravel\ApplicationInsights;
 use Throwable;
+use StellarSecurity\ApplicationInsightsLaravel\Helpers\HttpExtractor;
 
 class LogHttpRequests
 {
@@ -26,7 +27,7 @@ class LogHttpRequests
 
             $this->ai->trackRequest(
                 $request->getMethod(),
-                $request->fullUrl(),
+                HttpExtractor::url($request),
                 $statusCode,
                 $durationMs,
                 [
@@ -35,20 +36,18 @@ class LogHttpRequests
                     'http.path'    => $request->path(),
                     'http.route'   => optional($request->route())->uri(),
                     'http.status'  => $statusCode,
-                    'ip'           => $request->ip(),
-                    'user_agent'   => $request->userAgent(),
                     'app.env'      => config('app.env'),
                 ]
             );
 
             return $response;
         } catch (Throwable $e) {
-            // her ender vi, når der kastes exception (500)
+            // This is where we end up when an exception (500) is thrown
             $durationMs = (microtime(true) - $start) * 1000;
 
             $this->ai->trackRequest(
                 $request->getMethod(),
-                $request->fullUrl(),
+                HttpExtractor::url($request),
                 500,
                 $durationMs,
                 [
@@ -62,7 +61,7 @@ class LogHttpRequests
             );
 
 
-            // lad Laravel håndtere fejlen som normalt
+            // Let Laravel handle the exception as usual
             throw $e;
         }
     }

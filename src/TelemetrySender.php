@@ -5,6 +5,7 @@ namespace StellarSecurity\ApplicationInsightsLaravel;
 use GuzzleHttp\Client;
 use Illuminate\Contracts\Queue\Factory as QueueFactory;
 use StellarSecurity\ApplicationInsightsLaravel\Jobs\SendTelemetryJob;
+use StellarSecurity\ApplicationInsightsLaravel\Helpers\TelemetrySanitizer;
 
 class TelemetrySender
 {
@@ -18,6 +19,9 @@ class TelemetrySender
 
     public function enqueue(array $item): void
     {
+        // Sanitize telemetry before it ever enters the buffer or queue
+        $item = TelemetrySanitizer::sanitizeItem($item);
+
         $this->buffer[] = $item;
 
         if (count($this->buffer) >= $this->bufferLimit) {
@@ -58,12 +62,13 @@ class TelemetrySender
         $payload = [];
 
         foreach ($items as $item) {
-            // Hvis item ALLEREDE er et fuldt AI-envelope (fx RequestData / ExceptionData / etc),
-            // så sender vi det direkte og rører det ikke.
+            // Always sanitize before sending anything out
+            $item = TelemetrySanitizer::sanitizeItem($item);
+
             if (isset($item['data']['baseType'])) {
                 $envelope = $item;
 
-                // Sørg for iKey og time
+                // Ensure instrumentation key and timestamp are present
                 if (empty($envelope['iKey']) && $ikey !== '') {
                     $envelope['iKey'] = $ikey;
                 }
@@ -76,7 +81,6 @@ class TelemetrySender
                 continue;
             }
 
-            // Ellers: wrap som custom EventData (fallback)
             $payload[] = [
                 'time' => $item['time'] ?? gmdate('c'),
                 'name' => $item['name'] ?? 'Custom.Event',
@@ -92,6 +96,7 @@ class TelemetrySender
             ];
         }
 
+
         $client = $this->client ?: new Client([
             'timeout' => 2.0,
         ]);
@@ -102,7 +107,7 @@ class TelemetrySender
             ]);
 
         } catch (\Throwable $e) {
-            // Telemetry må ALDRIG smadre appen – men vi kan godt logge lokalt
+            // Telemetry must never break the application; failures here are intentionally ignored
         }
     }
 }

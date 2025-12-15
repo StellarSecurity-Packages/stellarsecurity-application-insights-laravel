@@ -4,17 +4,28 @@ namespace StellarSecurity\ApplicationInsightsLaravel;
 
 use GuzzleHttp\Client;
 use Illuminate\Contracts\Queue\Factory as QueueFactory;
+use Illuminate\Support\Facades\Log;
 use StellarSecurity\ApplicationInsightsLaravel\Jobs\SendTelemetryJob;
 
 class TelemetrySender
 {
     protected array $buffer = [];
-    protected int $bufferLimit = 1;
+
+    /**
+     * Buffer limit before flushing telemetry.
+     * Keep it small to avoid losing events on short-lived processes.
+     */
+    protected int $bufferLimit;
 
     public function __construct(
         protected ?QueueFactory $queue = null,
         protected ?Client $client = null,
-    ) {}
+    ) {
+        $this->bufferLimit = (int) config('stellar-ai.buffer_limit', 10);
+        if ($this->bufferLimit < 1) {
+            $this->bufferLimit = 1;
+        }
+    }
 
     public function enqueue(array $item): void
     {
@@ -34,7 +45,9 @@ class TelemetrySender
         $batch = $this->buffer;
         $this->buffer = [];
 
-        $useQueue = (bool) config('stellar-ai.use_queue', true);
+        $useQueue = (bool) config('stellar-ai.use_queue', false);
+
+        // If queue is enabled but no queue factory is available, fall back to direct send.
         if ($useQueue && $this->queue) {
             $this->queue->connection()->push(new SendTelemetryJob($batch));
             return;
@@ -48,24 +61,24 @@ class TelemetrySender
         $conn = (string) config('stellar-ai.connection_string', '');
         $ikey = (string) config('stellar-ai.instrumentation_key', '');
 
-        if ($conn === '' && $ikey === '') {
-            // no telemetry configured, just drop
+        $resolved = $this->resolveConfig($conn, $ikey);
+
+        // If nothing is configured, drop silently.
+        if ($resolved === null) {
             return;
         }
 
-        $endpoint = 'https://dc.services.visualstudio.com/v2/track';
+        [$endpoint, $instrumentationKey] = $resolved;
 
         $payload = [];
 
         foreach ($items as $item) {
-            // Hvis item ALLEREDE er et fuldt AI-envelope (fx RequestData / ExceptionData / etc),
-            // så sender vi det direkte og rører det ikke.
+            // If the item already looks like a full AI envelope, just normalize.
             if (isset($item['data']['baseType'])) {
                 $envelope = $item;
 
-                // Sørg for iKey og time
-                if (empty($envelope['iKey']) && $ikey !== '') {
-                    $envelope['iKey'] = $ikey;
+                if (empty($envelope['iKey'])) {
+                    $envelope['iKey'] = $instrumentationKey;
                 }
 
                 if (empty($envelope['time'])) {
@@ -76,11 +89,11 @@ class TelemetrySender
                 continue;
             }
 
-            // Ellers: wrap som custom EventData (fallback)
+            // Otherwise, wrap as a simple custom event.
             $payload[] = [
                 'time' => $item['time'] ?? gmdate('c'),
                 'name' => $item['name'] ?? 'Custom.Event',
-                'iKey' => $ikey !== '' ? $ikey : null,
+                'iKey' => $instrumentationKey,
                 'data' => [
                     'baseType' => 'EventData',
                     'baseData' => [
@@ -97,12 +110,67 @@ class TelemetrySender
         ]);
 
         try {
-            $response = $client->post($endpoint, [
+            $client->post($endpoint, [
                 'json' => $payload,
             ]);
-
         } catch (\Throwable $e) {
-            // Telemetry må ALDRIG smadre appen – men vi kan godt logge lokalt
+            // Telemetry must never break the app. Log locally at a low level.
+            Log::debug('Application Insights telemetry send failed: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Resolve ingestion endpoint + instrumentation key from connection string and/or fallback key.
+     *
+     * Returns:
+     *  - [endpointUrl, instrumentationKey]
+     *  - null if nothing is configured
+     */
+    protected function resolveConfig(string $connectionString, string $fallbackIkey): ?array
+    {
+        $ikey = trim($fallbackIkey);
+        $ingestionEndpoint = null;
+
+        if ($connectionString !== '') {
+            $parsed = $this->parseConnectionString($connectionString);
+
+            if (!empty($parsed['InstrumentationKey'])) {
+                $ikey = trim((string) $parsed['InstrumentationKey']);
+            }
+
+            if (!empty($parsed['IngestionEndpoint'])) {
+                $ingestionEndpoint = rtrim((string) $parsed['IngestionEndpoint'], '/');
+            }
+        }
+
+        if ($ikey === '') {
+            // Without an instrumentation key, Azure will drop telemetry.
+            return null;
+        }
+
+        // Default endpoint if none is provided in the connection string.
+        $base = $ingestionEndpoint ?: 'https://dc.services.visualstudio.com';
+
+        return [$base . '/v2/track', $ikey];
+    }
+
+    /**
+     * Parse connection string segments like "Key=Value;Key2=Value2".
+     */
+    protected function parseConnectionString(string $connectionString): array
+    {
+        $result = [];
+
+        foreach (explode(';', $connectionString) as $segment) {
+            $segment = trim($segment);
+            if ($segment === '' || !str_contains($segment, '=')) {
+                continue;
+            }
+
+            [$key, $value] = explode('=', $segment, 2);
+            $result[trim($key)] = trim($value);
+        }
+
+        return $result;
     }
 }

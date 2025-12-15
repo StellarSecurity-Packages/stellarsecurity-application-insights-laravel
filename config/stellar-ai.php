@@ -4,53 +4,39 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Connection string / instrumentation key
+    | Application Insights configuration
     |--------------------------------------------------------------------------
     |
-    | You can either set a full Application Insights connection string or
-    | just an instrumentation key. The telemetry sender will prefer the
-    | connection string if present.
+    | Prefer connection string. Fallback to instrumentation key if needed.
     |
     */
 
-    'connection_string' => env('STELLAR_AI_CONNECTION_STRING'),
+    'connection_string' => env(
+        'STELLAR_AI_CONNECTION_STRING',
+        env('APPLICATIONINSIGHTS_CONNECTION_STRING', '')
+    ),
 
-    'instrumentation_key' => env('STELLAR_AI_INSTRUMENTATION_KEY'),
+    'instrumentation_key' => env(
+        'STELLAR_AI_INSTRUMENTATION_KEY',
+        env('APPINSIGHTS_INSTRUMENTATIONKEY', '')
+    ),
 
     /*
     |--------------------------------------------------------------------------
-    | Queue usage
-    |--------------------------------------------------------------------------
-    |
-    | If true, telemetry is dispatched to the queue using SendTelemetryJob.
-    | If false, telemetry will be sent synchronously on the same request.
-    |
-    */
-
-    'use_queue' => env('STELLAR_AI_USE_QUEUE', true),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Sampling & thresholds
+    | Telemetry behavior
     |--------------------------------------------------------------------------
     */
 
-    'http_sample_rate' => env('STELLAR_AI_HTTP_SAMPLE_RATE', 1.0), // 0..1
+    // Queue is disabled by default to avoid silent data loss when workers are not running.
+    'use_queue' => env('STELLAR_AI_USE_QUEUE', false),
 
-    'db_slow_ms' => env('STELLAR_AI_DB_SLOW_MS', 500), // only log queries slower than this
+    // Buffer limit before flush (helps reduce HTTP calls).
+    'buffer_limit' => (int) env('STELLAR_AI_BUFFER_LIMIT', 10),
 
-    /*
-    |--------------------------------------------------------------------------
-    | Feature toggles
-    |--------------------------------------------------------------------------
-    */
+    // Flush telemetry automatically at the end of the request lifecycle.
+    'auto_flush' => env('STELLAR_AI_AUTO_FLUSH', true),
 
-    'features' => [
-        'http'        => env('STELLAR_AI_FEATURE_HTTP', true),
-        'db'          => env('STELLAR_AI_FEATURE_DB', true),
-        'jobs'        => env('STELLAR_AI_FEATURE_JOBS', true),
-        'mail'        => env('STELLAR_AI_FEATURE_MAIL', true),
-        'dependencies'=> env('STELLAR_AI_FEATURE_DEPENDENCIES', true),
-    ],
+    // Application role name shown in Azure.
+    'role_name' => env('STELLAR_AI_ROLE_NAME', env('APP_NAME', 'stellar-app')),
 
 ];

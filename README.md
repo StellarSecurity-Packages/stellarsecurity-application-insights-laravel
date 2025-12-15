@@ -1,19 +1,18 @@
+# Stellar Application Insights for Laravel
 
-# Stellar Security – Application Insights for Laravel
+A lightweight Laravel package that sends telemetry to Azure Application Insights (requests, exceptions, and custom events).
 
-Built by [StellarSecurity.com](https://stellarsecurity.com)
+Built by https://stellarsecurity.com
 
-Lightweight telemetry package for Laravel that sends structured events to your
-observability backend (e.g. Azure Application Insights).
+This package is designed to be safe by default:
+- Telemetry **must never** break your application
+- Queue sending is **disabled by default** to avoid silent data loss
+- Connection String is the preferred configuration (modern App Insights)
 
-It can automatically track:
-
-- Incoming HTTP requests
-- Outgoing HTTP calls (Guzzle)
-- Database slow queries
-- Failed jobs
-- Mail failures
-- Custom AV / security events
+## Requirements
+- PHP >= 8.1
+- Laravel 10+ (also compatible with Laravel 11/12 when using matching illuminate components)
+- Guzzle 7.x
 
 ## Installation
 
@@ -21,118 +20,134 @@ It can automatically track:
 composer require stellarsecurity/application-insights-laravel
 ```
 
-Laravel will auto-discover the service provider.
+## Configuration
 
-Then publish the config:
+Publish the config (if your package provides a publish command). If not, create `config/stellar-ai.php` in your app.
 
-```bash
-php artisan vendor:publish --tag=stellar-ai-config
-```
+### Recommended: Connection String
 
-Set your instrumentation key:
+Set one of the following in your `.env`:
 
 ```env
-STELLAR_AI_INSTRUMENTATION_KEY="446e6a5e-a5ca-4c50-b311-e82648d987ef"
+APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=xxxx;IngestionEndpoint=https://westeurope-0.in.applicationinsights.azure.com/
 ```
 
-If you use queues, enable queue mode (default = true):
+You may also use the package-specific key:
+
+```env
+STELLAR_AI_CONNECTION_STRING=InstrumentationKey=xxxx;IngestionEndpoint=https://westeurope-0.in.applicationinsights.azure.com/
+```
+
+### Fallback: Instrumentation Key only
+
+```env
+STELLAR_AI_INSTRUMENTATION_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+## Example config (`config/stellar-ai.php`)
+
+```php
+<?php
+
+return [
+
+    /*
+    |--------------------------------------------------------------------------
+    | Application Insights configuration
+    |--------------------------------------------------------------------------
+    |
+    | Prefer connection string. Fallback to instrumentation key if needed.
+    |
+    */
+
+    'connection_string' => env(
+        'STELLAR_AI_CONNECTION_STRING',
+        env('APPLICATIONINSIGHTS_CONNECTION_STRING', '')
+    ),
+
+    'instrumentation_key' => env(
+        'STELLAR_AI_INSTRUMENTATION_KEY',
+        env('APPINSIGHTS_INSTRUMENTATIONKEY', '')
+    ),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Telemetry behavior
+    |--------------------------------------------------------------------------
+    */
+
+    // Queue is disabled by default to avoid silent data loss when workers are not running.
+    'use_queue' => env('STELLAR_AI_USE_QUEUE', false),
+
+    // Buffer limit before flush (helps reduce HTTP calls).
+    'buffer_limit' => (int) env('STELLAR_AI_BUFFER_LIMIT', 10),
+
+    // Flush telemetry automatically at the end of the request lifecycle.
+    'auto_flush' => env('STELLAR_AI_AUTO_FLUSH', true),
+
+    // Application role name shown in Azure.
+    'role_name' => env('STELLAR_AI_ROLE_NAME', env('APP_NAME', 'stellar-app')),
+
+];
+```
+
+## Queue mode (optional)
+
+By default, telemetry is sent directly (HTTP) to avoid losing data if no workers are running.
+
+If you want to use queues:
 
 ```env
 STELLAR_AI_USE_QUEUE=true
 ```
 
-and run a worker:
+Then ensure a worker is running in production:
 
 ```bash
 php artisan queue:work
 ```
 
-If you don’t use queues, the package will send telemetry synchronously.
+If you enable queue mode without a running worker, telemetry will be delayed (and may appear missing).
 
----
+## What is tracked
+Depending on your middleware/service wiring, the package can track:
+- HTTP requests
+- Exceptions
+- Custom events (EventData)
+- Dependencies (if you emit dependency telemetry)
 
-## Enable automatic HTTP request tracking
+## Viewing data in Azure
 
-In **`bootstrap/app.php`** (Laravel 11/12 style), register the HTTP middleware:
+In Azure Portal → Application Insights → **Logs (Analytics)**, run:
 
-```php
-use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Configuration\Middleware;
-use Illuminate\Foundation\Configuration\Exceptions;
-use StellarSecurity\ApplicationInsightsLaravel\Middleware\LogHttpRequests;
-
-return Application::configure(basePath: dirname(__DIR__))
-    ->withRouting(
-        web: __DIR__.'/../routes/web.php',
-        commands: __DIR__.'/../routes/console.php',
-        // ...
-    )
-    ->withMiddleware(function (Middleware $middleware) {
-        // Append Stellar HTTP logging to the global stack
-        $middleware->append(LogHttpRequests::class);
-    })
-    ->withExceptions(function (Exceptions $exceptions) {
-        // see "Enable automatic exception tracking" below
-    })
-    ->create();
+```kusto
+union requests, traces, exceptions
+| order by timestamp desc
 ```
 
-After this, every incoming HTTP request will be sent to Application Insights as telemetry
-(method, URL, status code, duration, etc.).
+If you only want requests:
 
----
-
-## Enable automatic exception tracking
-
-Still in **`bootstrap/app.php`**, wire the exception hook inside `withExceptions`:
-
-```php
-use Throwable;
-use Illuminate\Foundation\Configuration\Exceptions;
-use StellarSecurity\ApplicationInsightsLaravel\ApplicationInsights;
-
-return Application::configure(basePath: dirname(__DIR__))
-    // ...
-    ->withExceptions(function (Exceptions $exceptions) {
-        $exceptions->report(function (Throwable $e) {
-            // Send exceptions to Application Insights
-            app(ApplicationInsights::class)->trackException($e);
-        });
-    })
-    ->create();
+```kusto
+requests
+| order by timestamp desc
 ```
 
-Now every reported exception will be pushed to Application Insights as a custom event / exception telemetry.
+## Common troubleshooting
 
----
+### I see no data at all
+1. Confirm your app is using the **correct** Application Insights resource.
+2. Confirm a valid **instrumentation key** is resolved.
+    - If using a connection string, it must include `InstrumentationKey=...`
+3. If queue mode is enabled, confirm workers are running.
+4. Clear and rebuild config cache after changing `.env`:
 
-## Basic manual usage
-
-You can also send custom events from anywhere:
-
-```php
-use StellarSecurity\ApplicationInsightsLaravel\ApplicationInsights;
-
-app(ApplicationInsights::class)->trackEvent('AV.HashCheck', [
-    'client'  => 'Stellar Antivirus Desktop',
-    'verdict' => 'malware',
-]);
+```bash
+php artisan config:clear
+php artisan config:cache
 ```
 
----
+### Azure “Search” looks empty, but Logs has data
+This is usually a UI filtering issue. Use Logs (Analytics) queries to confirm ingestion.
 
-## What gets tracked automatically?
-
-Once installed and configured:
-
-- **HTTP requests** – via `LogHttpRequests` middleware
-- **Exceptions** – via the `withExceptions` hook
-- **(Optional) Queued jobs / DB / mail / dependencies** – depending on how you use the package in your app
-
-Telemetry is batched and sent to the official Azure ingestion endpoint.
-
----
-
-## About Stellar Security
-
-Stellar Security builds privacy-focused security products (Stellar Antivirus, StellarOS, VPN and more) with Swiss-grade security.
+## License
+MIT

@@ -14,8 +14,10 @@ class HttpExtractor
 
     public static function url(Request $request): string
     {
-        return $request->fullUrl();
+        // Only log the base URL without query parameters
+        return $request->url();
     }
+
 
     public static function statusCode(Response $response): int
     {

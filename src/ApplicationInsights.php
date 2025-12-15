@@ -3,6 +3,7 @@
 namespace StellarSecurity\ApplicationInsightsLaravel;
 
 use Throwable;
+use StellarSecurity\ApplicationInsightsLaravel\Helpers\TelemetrySanitizer;
 
 class ApplicationInsights
 {
@@ -12,6 +13,9 @@ class ApplicationInsights
 
     public function trackEvent(string $name, array $properties = []): void
     {
+
+        $properties = TelemetrySanitizer::sanitizeProperties($properties);
+
         $this->sender->enqueue([
             'type' => 'event',
             'name' => $name,
@@ -54,6 +58,9 @@ class ApplicationInsights
 
         // 4xx/5xx = failed
         $success = $statusCode < 400;
+
+        // Sanitize request properties before enqueuing
+        $properties = TelemetrySanitizer::sanitizeProperties($properties);
 
         $item = [
             'name' => 'Microsoft.ApplicationInsights.Request',
